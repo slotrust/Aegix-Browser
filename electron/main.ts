@@ -26,6 +26,24 @@ async function initBlocker() {
 
 let mainWindow: BrowserWindow | null = null;
 
+const adDomains = [
+  'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
+  'amazon-adsystem.com', 'advertising.com', 'taboola.com',
+  'outbrain.com', 'criteo.com', 'adnxs.com',
+  'rubiconproject.com', 'adsrvr.org', 'spotxchange.com',
+  'pubmatic.com', 'smartadserver.com', 'moatads.com',
+  'facebook.com/tr/', 'quantserve.com', 'scorecardresearch.com',
+  'mathtag.com', 'rlcdn.com', 'tynt.com', 'popads.net', 'popcash.net'
+];
+
+function isAdUrl(urlString: string) {
+  try {
+    const url = new URL(urlString);
+    return adDomains.some(d => url.hostname.includes(d));
+  } catch (e) {
+    return false;
+  }
+}
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -94,6 +112,23 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
+  });
+
+  app.on('web-contents-created', (event, contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+      if (isAdUrl(url)) {
+        console.log(`[Aegix Engine] Blocked popup: ${url}`);
+        return { action: 'deny' }; // 🚫 block popup
+      }
+      return { action: 'allow' };
+    });
+
+    contents.on('will-navigate', (event, url) => {
+      if (isAdUrl(url)) {
+        console.log(`[Aegix Engine] Blocked redirect: ${url}`);
+        event.preventDefault(); // 🚫 stop redirect
+      }
+    });
   });
 });
 
