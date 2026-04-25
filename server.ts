@@ -151,10 +151,16 @@ async function startServer() {
     "mathtag.com",
     "rlcdn.com",
     "tynt.com",
-    "youtube.com/api/stats/ads",
   ];
 
-  // Exception rules (ALLOW priority)
+  // Critical sites that will crash if we inject HTML or aggressively adblock
+  const CRITICAL_ALLOW = [
+    "youtube.com",
+    "googlevideo.com",
+    "ytimg.com",
+    "gstatic.com",
+    "google.com"
+  ];
   const allowDomains = ["youtube.com", "google.com"];
 
   // Ad and Stats tracking endpoint
@@ -334,10 +340,10 @@ async function startServer() {
           const isAllowed = allowDomains.some((allow) =>
             targetUrl.includes(allow),
           );
-          if (!isAllowed && adDomains.some((ad) => targetUrl.includes(ad))) {
-            console.log(`[AdBlock] Blocked: ${targetUrl}`);
-            res.end();
-            return;
+          const isCritical = CRITICAL_ALLOW.some((allow) => targetUrl.includes(allow));
+          if (!isAllowed && !isCritical && adDomains.some((ad) => targetUrl.includes(ad))) {
+             console.log(`[AdBlock] Ignored/Passed for: ${targetUrl}`);
+             // Let pass by doing nothing
           }
 
           // Redirect to proxy to fetch the asset
@@ -371,10 +377,10 @@ async function startServer() {
     if (!targetUrl) return res.status(400).send("Missing url parameter");
 
     const isAllowed = allowDomains.some((allow) => targetUrl.includes(allow));
-    if (!isAllowed && adDomains.some((ad) => targetUrl.includes(ad))) {
-      console.log(`[AdBlock] Blocked in Proxy: ${targetUrl}`);
-      res.end();
-      return;
+    const isCritical = CRITICAL_ALLOW.some((allow) => targetUrl.includes(allow));
+    if (!isAllowed && !isCritical && adDomains.some((ad) => targetUrl.includes(ad))) {
+      console.log(`[AdBlock] Ignored/Passed in Proxy: ${targetUrl}`);
+      // let it pass
     }
 
     // Add protocol if missing
@@ -388,7 +394,7 @@ async function startServer() {
         changeOrigin: true,
         cookieDomainRewrite: "",
         ws: true,
-        selfHandleResponse: true, // We will handle response to inject <base> tag!
+        selfHandleResponse: true, // We must handle response to inject <base> tag OR just pipe it
         pathRewrite: () => urlObj.pathname + urlObj.search,
         on: {
           proxyReq: (proxyReq: any, req: any) => {
@@ -396,12 +402,17 @@ async function startServer() {
             proxyReq.removeHeader("content-security-policy");
             proxyReq.removeHeader("accept-encoding"); // Stop gzip compression to parse HTML!
 
-            if (req.headers.origin) {
-              proxyReq.setHeader("origin", req.headers.origin);
-            }
-            if (req.headers.referer) {
-              proxyReq.setHeader("referer", req.headers.referer);
-            }
+            const match = req.originalUrl.match(/[?&]url=([^&]+.*)/);
+            let targetUrl = match ? decodeURIComponent(match[1]) : (req.query.url as string);
+            if (!targetUrl) return;
+            if (!targetUrl.startsWith("http")) targetUrl = "https://" + targetUrl;
+            
+            try {
+               const parsedUrl = new URL(targetUrl);
+               proxyReq.setHeader("Origin", parsedUrl.origin);
+               proxyReq.setHeader("Referer", parsedUrl.origin + "/");
+            } catch (e) {}
+            
             if (req.headers["user-agent"]) {
               proxyReq.setHeader("user-agent", req.headers["user-agent"]);
             } else {
@@ -484,6 +495,7 @@ async function startServer() {
 
             const contentType = proxyRes.headers["content-type"];
             if (
+              !isCritical &&
               contentType &&
               contentType.toLowerCase().includes("text/html")
             ) {

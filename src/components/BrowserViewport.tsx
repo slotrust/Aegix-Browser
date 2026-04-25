@@ -50,6 +50,34 @@ function TabContent({ tab, isActive }: { tab: Tab, isActive: boolean, key?: Reac
   const effectiveProxyMode = proxyMode || isVpnActive || autoProxy;
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  useEffect(() => {
+    if ((window as any).electronAPI && iframeRef.current) {
+      const webview = iframeRef.current as any;
+      
+      const handleDidNavigate = (e: any) => {
+        updateTab(tab.id, { url: e.url, title: webview.getTitle(), loading: false });
+      };
+      
+      const handleDidNavigateInPage = (e: any) => {
+        updateTab(tab.id, { url: e.url, title: webview.getTitle() });
+      };
+      
+      const handlePageTitleUpdated = (e: any) => {
+        updateTab(tab.id, { title: e.title });
+      };
+
+      webview.addEventListener('did-navigate', handleDidNavigate);
+      webview.addEventListener('did-navigate-in-page', handleDidNavigateInPage);
+      webview.addEventListener('page-title-updated', handlePageTitleUpdated);
+      
+      return () => {
+        webview.removeEventListener('did-navigate', handleDidNavigate);
+        webview.removeEventListener('did-navigate-in-page', handleDidNavigateInPage);
+        webview.removeEventListener('page-title-updated', handlePageTitleUpdated);
+      };
+    }
+  }, [tab.id, updateTab, iframeRef.current]);
+
   const handleLoad = async () => {
     updateTab(tab.id, { loading: false });
     syncHistory(tab.url, tab.title, !!tab.isPrivate);
@@ -108,7 +136,7 @@ function TabContent({ tab, isActive }: { tab: Tab, isActive: boolean, key?: Reac
 
     content = (
       <>
-        {iframeError && !effectiveProxyMode && (
+        {iframeError && !effectiveProxyMode && !(window as any).electronAPI && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#1C1E20] text-gray-100 z-10 p-4">
             <ShieldAlert size={48} className="text-[#fb542b] mb-4" />
             <h2 className="text-2xl font-bold mb-2">iframe Blocked by Target Site</h2>
@@ -138,19 +166,33 @@ function TabContent({ tab, isActive }: { tab: Tab, isActive: boolean, key?: Reac
             </div>
           </div>
         )}
-        <iframe
-          ref={iframeRef}
-          src={displayUrl}
-          onLoad={handleLoad}
-          onError={handleError}
-          className={cn(
-            "w-full h-full border-none bg-white",
-            (tab.loading && !effectiveProxyMode) ? "opacity-0" : "opacity-100",
-            (iframeError && !effectiveProxyMode) ? "hidden" : "block"
-          )}
-          sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads allow-presentation allow-pointer-lock"
-          title={`Aegix - ${tab.title}`}
-        />
+        {(window as any).electronAPI ? (
+          <webview
+            ref={iframeRef as any}
+            src={targetUrl} /* In Electron, we don't need the proxy! */
+            onLoad={handleLoad}
+            partition={tab.isPrivate ? `incognito:tab-${tab.id}` : `persist:tab-${tab.id}`}
+            className={cn(
+              "w-full h-full border-none bg-white",
+              tab.loading ? "opacity-0" : "opacity-100"
+            )}
+            title={`Aegix - ${tab.title}`}
+          />
+        ) : (
+          <iframe
+            ref={iframeRef}
+            src={displayUrl}
+            onLoad={handleLoad}
+            onError={handleError}
+            className={cn(
+              "w-full h-full border-none bg-white",
+              (tab.loading && !effectiveProxyMode) ? "opacity-0" : "opacity-100",
+              (iframeError && !effectiveProxyMode) ? "hidden" : "block"
+            )}
+            sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-downloads allow-presentation allow-pointer-lock"
+            title={`Aegix - ${tab.title}`}
+          />
+        )}
       </>
     );
   }
