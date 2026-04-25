@@ -1,0 +1,104 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitives
+    function isValidId(id) { return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['userId', 'createdAt', 'updatedAt'])
+        && data.userId is string && data.userId.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.settings is map
+        && data.userId == request.auth.uid;
+    }
+
+    function isValidBookmark(data) {
+      return data.keys().hasAll(['title', 'url', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() <= 500
+        && data.url is string && data.url.size() <= 2000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidHistory(data) {
+      return data.keys().hasAll(['title', 'url', 'visitedAt'])
+        && data.title is string && data.title.size() <= 500
+        && data.url is string && data.url.size() <= 2000
+        && data.visitedAt is timestamp;
+    }
+
+    // User Profile & Settings
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId)
+                    && isValidId(userId)
+                    && isValidUser(incoming())
+                    && incoming().createdAt == request.time
+                    && incoming().updatedAt == request.time
+                    && incoming().keys().hasAll(['userId', 'createdAt', 'updatedAt', 'settings'])
+                    && incoming().keys().size() == 4;
+      allow update: if isOwner(userId)
+                    && isValidId(userId)
+                    && isValidUser(incoming())
+                    && incoming().updatedAt == request.time
+                    && incoming().userId == existing().userId
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['settings', 'updatedAt']);
+    }
+
+    // User Bookmarks
+    match /users/{userId}/bookmarks/{bookmarkId} {
+      allow read: if isOwner(userId);
+      allow list: if isOwner(userId);
+      allow create: if isOwner(userId)
+                    && isValidId(userId)
+                    && isValidId(bookmarkId)
+                    && isValidBookmark(incoming())
+                    && incoming().createdAt == request.time
+                    && incoming().updatedAt == request.time
+                    && incoming().keys().hasAny(['icon']) == false || (incoming().icon is string && incoming().icon.size() <= 100);
+      allow update: if isOwner(userId)
+                    && isValidId(userId)
+                    && isValidId(bookmarkId)
+                    && isValidBookmark(incoming())
+                    && incoming().updatedAt == request.time
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'url', 'icon', 'updatedAt']);
+      allow delete: if isOwner(userId) && isValidId(userId) && isValidId(bookmarkId);
+    }
+
+    // User History
+    match /users/{userId}/history/{historyId} {
+      allow read: if isOwner(userId);
+      allow list: if isOwner(userId);
+       allow create: if isOwner(userId)
+                    && isValidId(userId)
+                    && isValidId(historyId)
+                    && isValidHistory(incoming())
+                    && incoming().visitedAt == request.time
+                    && incoming().keys().size() == 3;
+      allow delete: if isOwner(userId) && isValidId(userId) && isValidId(historyId);
+    }
+    // User Proxy Storage
+    match /users/{userId}/proxyStorage/{docId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+                    && isValidId(userId)
+                    && isValidId(docId)
+                    && incoming().keys().hasAll(['data', 'updatedAt'])
+                    && incoming().data is map
+                    && incoming().updatedAt == request.time;
+      allow delete: if isOwner(userId) && isValidId(userId) && isValidId(docId);
+    }
+  }
+}
